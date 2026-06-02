@@ -1,46 +1,36 @@
-# Plataforma Académica AVE UVG - Fase 3.1
+# Plataforma Académica AVE UVG - Fase 3.2
 
-Esta versión incluye:
+Versión corregida para guardado histórico en Supabase.
 
-- Token Canvas desde la interfaz.
-- Selección de varias aulas Canvas como secciones consolidadas.
-- Diagnóstico de permisos Canvas.
-- Carga de estudiantes, actividades, módulos y entregas.
-- Cálculo de avance esperado, avance real y brecha.
-- Puntaje y nivel de riesgo académico.
-- Ranking de causas de riesgo.
-- Comparación por sección/aula.
-- Guardado de cortes históricos en Supabase.
-- Comparación inicial con reporte anterior.
+## Corrección incluida
 
-## Uso local
+Esta versión corrige el error:
+
+```text
+invalid input syntax for type integer: "5.0"
+```
+
+El problema se producía porque algunos campos enteros provenientes de Pandas se estaban enviando a Supabase como texto decimal, por ejemplo `5.0`, aunque la tabla esperaba un `integer`.
+
+Ahora la app limpia automáticamente:
+
+- `NaT` -> `NULL`
+- `NaN` -> `NULL`
+- `5.0` -> `5` en columnas enteras
+- porcentajes y métricas decimales -> `numeric`
+- fechas vacías -> `NULL`
+
+## Uso
+
+1. Conserva tu archivo `.streamlit/secrets.toml`.
+2. Ejecuta la app:
 
 ```bash
-pip install -r requirements.txt
 streamlit run app.py
 ```
 
-## Supabase
+3. Carga datos académicos.
+4. Ejecuta el análisis de Fase 3.
+5. Guarda el corte histórico en Supabase.
 
-1. Copiar `.streamlit/secrets.toml.example` como `.streamlit/secrets.toml`.
-2. Colocar `url` y `key` de Supabase.
-3. Ejecutar en Supabase SQL Editor el archivo:
-
-```text
-database/schema_fase3.sql
-```
-
-## Flujo recomendado
-
-1. Configuración: ingresar token Canvas.
-2. Selección: elegir aulas/secciones.
-3. Diagnóstico: validar endpoints.
-4. Carga académica: traer datos Canvas.
-5. Análisis Fase 3.1: configurar fechas y calcular riesgo.
-6. Guardar corte histórico: almacenar en Supabase.
-7. Dashboard ejecutivo: revisar indicadores principales.
-
-
-## Corrección Fase 3.1
-
-Se corrigió el guardado histórico en Supabase para convertir valores vacíos de fecha, como NaT, a NULL antes de insertarlos en columnas timestamp.
+No es necesario volver a ejecutar `schema_fase3.sql` si las tablas ya existen.

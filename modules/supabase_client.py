@@ -9,6 +9,99 @@ import streamlit as st
 from supabase import create_client
 
 
+INTEGER_FIELDS = {
+    "id",
+    "reporte_id",
+    "total_estudiantes",
+    "riesgo_bajo",
+    "riesgo_medio",
+    "riesgo_alto",
+    "nunca_ingreso",
+    "ingreso_no_inicio",
+    "modulo_1",
+    "avance_parcial",
+    "avance_insuficiente",
+    "actividades_pendientes",
+    "combinacion_factores",
+    "canvas_course_id",
+    "canvas_user_id",
+    "section_id",
+    "dias_sin_actividad",
+    "actividades_total",
+    "actividades_completadas",
+    "modulo_maximo",
+    "puntaje_riesgo",
+}
+
+NUMERIC_FIELDS = {
+    "avance_esperado_promedio",
+    "avance_real_promedio",
+    "brecha_promedio",
+    "tiempo_total_min",
+    "avance_real_pct",
+    "avance_esperado_pct",
+    "brecha_pct",
+}
+
+TIMESTAMP_FIELDS = {
+    "ultimo_ingreso",
+    "ultima_entrega",
+    "ultima_actividad",
+    "fecha_registro",
+    "fecha_generacion",
+}
+
+
+def _to_int_or_none(value: Any) -> Optional[int]:
+    """Convierte enteros que Pandas puede dejar como 5.0 o '5.0'."""
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except Exception:
+        pass
+
+    if isinstance(value, str):
+        text = value.strip()
+        if text == "" or text.lower() in {"nan", "nat", "none", "null"}:
+            return None
+        try:
+            return int(float(text))
+        except Exception:
+            return None
+
+    try:
+        return int(float(value))
+    except Exception:
+        return None
+
+
+def _to_float_or_none(value: Any) -> Optional[float]:
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except Exception:
+        pass
+
+    if isinstance(value, str):
+        text = value.strip()
+        if text == "" or text.lower() in {"nan", "nat", "none", "null"}:
+            return None
+        text = text.replace("%", "")
+        try:
+            return float(text)
+        except Exception:
+            return None
+
+    try:
+        return float(value)
+    except Exception:
+        return None
+
+
 def get_supabase_client():
     url = st.secrets["supabase"]["url"]
     key = st.secrets["supabase"]["key"]
@@ -60,7 +153,19 @@ def _clean_value(value: Any) -> Any:
 
 
 def _clean_record(record: Dict[str, Any]) -> Dict[str, Any]:
-    return {k: _clean_value(v) for k, v in record.items()}
+    cleaned: Dict[str, Any] = {}
+
+    for key, value in record.items():
+        if key in INTEGER_FIELDS:
+            cleaned[key] = _to_int_or_none(value)
+        elif key in NUMERIC_FIELDS:
+            cleaned[key] = _to_float_or_none(value)
+        elif key in TIMESTAMP_FIELDS:
+            cleaned[key] = _clean_value(value)
+        else:
+            cleaned[key] = _clean_value(value)
+
+    return cleaned
 
 
 def save_report_snapshot(
