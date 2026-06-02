@@ -1,54 +1,55 @@
 # Plataforma Académica AVE UVG - Fase 1
 
-Esta primera fase incluye:
+Esta versión permite:
 
-- Conexión con Canvas LMS.
-- Conexión con Supabase.
-- Carga de cursos desde Canvas.
-- Carga de secciones por curso.
-- Selección múltiple de secciones.
-- Estilos iniciales con colores AVE UVG.
+- Ingresar el token personal de Canvas desde la interfaz de Streamlit.
+- Probar conexión con Canvas.
+- Probar conexión con Supabase.
+- Cargar cursos desde Canvas.
+- Cargar secciones por curso.
+- Seleccionar una o varias secciones para análisis posterior.
 
-## Instalación local
+## Importante sobre el token de Canvas
 
-1. Instalar dependencias:
+El enlace de Canvas viene configurado de fábrica:
 
-```bash
-pip install -r requirements.txt
+```text
+https://uvg.instructure.com
 ```
 
-2. Crear el archivo real de secretos:
+Cada asesor debe pegar su token personal en la sección **1. Configuración** de la aplicación.
+El token se guarda únicamente durante la sesión activa de Streamlit mediante `st.session_state`.
+No se guarda en el código, no se guarda en `secrets.toml` y se puede limpiar desde la interfaz.
 
-Copiar:
+## Configuración de Supabase
 
-```bash
+Copiar el archivo:
+
+```text
 .streamlit/secrets.toml.example
 ```
 
 como:
 
-```bash
+```text
 .streamlit/secrets.toml
 ```
 
-3. Completar credenciales:
+Luego colocar:
 
 ```toml
-[canvas]
-base_url = "https://uvg.instructure.com"
-token = "PEGAR_AQUI_TOKEN_CANVAS"
-
 [supabase]
-url = "PEGAR_AQUI_URL_SUPABASE"
-key = "PEGAR_AQUI_SUPABASE_KEY"
+url = "URL_DE_SUPABASE"
+key = "KEY_DE_SUPABASE"
 ```
 
-4. Ejecutar:
+## Instalación
 
 ```bash
+pip install -r requirements.txt
 streamlit run app.py
 ```
 
-## Importante
+## Fase siguiente
 
-El archivo `secrets.toml` real no se incluye por seguridad. Solo se incluye `secrets.toml.example`.
+La Fase 2 debe traer estudiantes, último acceso, actividades, módulos y avance real desde Canvas.

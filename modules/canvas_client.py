@@ -1,11 +1,21 @@
 import requests
 import streamlit as st
 
+CANVAS_BASE_URL = "https://uvg.instructure.com"
+
 
 def get_canvas_config():
-    """Lee la configuración de Canvas desde secrets.toml."""
-    base_url = st.secrets["canvas"]["base_url"].rstrip("/")
-    token = st.secrets["canvas"]["token"]
+    """
+    Obtiene la configuración de Canvas.
+    El enlace institucional queda fijo de fábrica y el token se toma desde
+    st.session_state para que cada asesor lo ingrese desde la interfaz.
+    """
+    base_url = CANVAS_BASE_URL.rstrip("/")
+    token = st.session_state.get("canvas_token", "").strip()
+
+    if not token:
+        raise ValueError("Debe ingresar un token de Canvas antes de consultar la API.")
+
     return base_url, token
 
 
