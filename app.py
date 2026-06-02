@@ -12,15 +12,17 @@ from modules.canvas_client import (
     collect_course_dataset,
     run_canvas_diagnostics,
 )
-from modules.supabase_client import test_supabase_connection
-from modules.academic_metrics import consolidate_datasets, build_summary
-from modules.ui_styles import apply_ave_styles, AVE_COLORS, metric_card
-
-st.set_page_config(
-    page_title="Plataforma Académica AVE - Fase 2.1",
-    page_icon="📊",
-    layout="wide",
+from modules.supabase_client import test_supabase_connection, save_report_snapshot, get_previous_report
+from modules.academic_metrics import (
+    consolidate_datasets,
+    add_expected_gap_and_risk,
+    build_summary,
+    risk_ranking,
+    section_comparison,
 )
+from modules.ui_styles import apply_ave_styles, metric_card
+
+st.set_page_config(page_title="Plataforma Académica AVE - Fase 3", page_icon="📊", layout="wide")
 apply_ave_styles()
 
 # -------------------------------------------------------------------
@@ -32,6 +34,9 @@ st.session_state.setdefault("selected_course_ids", [])
 st.session_state.setdefault("selected_course_labels", [])
 st.session_state.setdefault("datasets", [])
 st.session_state.setdefault("student_metrics_df", pd.DataFrame())
+st.session_state.setdefault("summary", {})
+st.session_state.setdefault("course_consolidated_name", "")
+st.session_state.setdefault("last_saved_report_id", None)
 
 # -------------------------------------------------------------------
 # Encabezado
@@ -44,7 +49,7 @@ with col_title:
         """
         <div class="ave-title">Plataforma Académica AVE UVG</div>
         <div class="ave-subtitle">
-        Fase 2.1: diagnóstico de permisos Canvas, carga académica y rutas alternativas para entregas.
+        Fase 3: avance esperado, brecha, riesgo académico, ranking de causas y cortes históricos en Supabase.
         </div>
         """,
         unsafe_allow_html=True,
@@ -68,9 +73,11 @@ menu = st.sidebar.radio(
         "1. Configuración",
         "2. Selección de aulas/secciones",
         "3. Diagnóstico Canvas",
-        "4. Carga académica Fase 2.1",
-        "5. Dashboard inicial",
-        "6. Resumen de Fase 2.1",
+        "4. Carga académica",
+        "5. Análisis Fase 3",
+        "6. Guardar corte histórico",
+        "7. Dashboard ejecutivo",
+        "8. Resumen de Fase 3",
     ],
 )
 
@@ -79,7 +86,7 @@ menu = st.sidebar.radio(
 # -------------------------------------------------------------------
 if menu == "1. Configuración":
     st.header("1. Configuración de conexiones")
-    st.write("En esta fase, cada asesor puede ingresar su token de Canvas directamente desde la aplicación.")
+    st.write("Cada asesor puede ingresar su token personal de Canvas directamente desde la aplicación.")
 
     col1, col2 = st.columns(2)
     with col1:
@@ -112,7 +119,7 @@ if menu == "1. Configuración":
 
     with col2:
         st.subheader("Supabase")
-        st.write("Supabase se mantiene en secrets porque representa la base institucional.")
+        st.write("Supabase se mantiene en secrets porque representa la base institucional de reportes históricos.")
         if st.button("Probar conexión con Supabase"):
             ok, result = test_supabase_connection()
             if ok:
@@ -120,16 +127,14 @@ if menu == "1. Configuración":
             else:
                 st.error("No se pudo conectar con Supabase.")
                 st.write(result)
+        st.caption("Para guardar cortes históricos, primero ejecuta el SQL incluido en database/schema_fase3.sql.")
 
 # -------------------------------------------------------------------
 # 2. Selección de aulas/secciones
 # -------------------------------------------------------------------
 elif menu == "2. Selección de aulas/secciones":
     st.header("2. Selección de aulas Canvas que se unificarán como secciones")
-    st.info(
-        "En AVE, muchas secciones aparecen como cursos/aulas Canvas independientes. "
-        "Por eso aquí puedes seleccionar varias aulas y analizarlas juntas como un mismo curso académico."
-    )
+    st.info("Selecciona una o varias aulas Canvas para analizarlas juntas como un mismo curso académico.")
 
     if st.button("Cargar cursos desde Canvas"):
         ok, courses = get_canvas_courses()
@@ -143,31 +148,20 @@ elif menu == "2. Selección de aulas/secciones":
     courses = st.session_state.get("courses", [])
     if courses:
         courses_df = pd.DataFrame([
-            {
-                "id": c.get("id"),
-                "nombre": c.get("name"),
-                "codigo": c.get("course_code"),
-                "estado": c.get("workflow_state"),
-                "total_estudiantes": c.get("total_students"),
-            }
+            {"id": c.get("id"), "nombre": c.get("name"), "codigo": c.get("course_code"), "estado": c.get("workflow_state"), "total_estudiantes": c.get("total_students")}
             for c in courses if c.get("name")
         ])
         filtro = st.text_input("Filtrar cursos por nombre", value="")
-        if filtro:
-            view_df = courses_df[courses_df["nombre"].str.contains(filtro, case=False, na=False)]
-        else:
-            view_df = courses_df
-
+        view_df = courses_df[courses_df["nombre"].str.contains(filtro, case=False, na=False)] if filtro else courses_df
         st.dataframe(view_df, use_container_width=True, height=280)
 
         options = {f'{r["nombre"]} | ID: {r["id"]}': int(r["id"]) for _, r in view_df.iterrows()}
-        selected = st.multiselect(
-            "Seleccione una o varias aulas/secciones Canvas para consolidar",
-            options=list(options.keys()),
-            default=st.session_state.get("selected_course_labels", []),
-        )
+        selected = st.multiselect("Seleccione una o varias aulas/secciones Canvas para consolidar", options=list(options.keys()), default=st.session_state.get("selected_course_labels", []))
         st.session_state["selected_course_labels"] = selected
         st.session_state["selected_course_ids"] = [options[s] for s in selected]
+
+        curso_nombre = st.text_input("Nombre del curso consolidado para el reporte", value=st.session_state.get("course_consolidated_name") or (filtro.strip() if filtro else "Curso consolidado AVE"))
+        st.session_state["course_consolidated_name"] = curso_nombre.strip() or "Curso consolidado AVE"
 
         if selected:
             st.success(f"Se seleccionaron {len(selected)} aula(s)/sección(es) para el análisis.")
@@ -191,206 +185,260 @@ elif menu == "2. Selección de aulas/secciones":
 # -------------------------------------------------------------------
 elif menu == "3. Diagnóstico Canvas":
     st.header("3. Diagnóstico de permisos y endpoints de Canvas")
-    st.info(
-        "Este diagnóstico permite saber exactamente qué información deja leer Canvas con el token del asesor: "
-        "estudiantes, actividades, módulos y entregas. Sirve para explicar los avisos amarillos y ajustar la lógica de avance."
-    )
-
     selected_ids = st.session_state.get("selected_course_ids", [])
     selected_labels = st.session_state.get("selected_course_labels", [])
-
     if not selected_ids:
         st.warning("Primero selecciona al menos un aula/sección en el menú 2.")
         st.stop()
 
     options_diag = {label: cid for label, cid in zip(selected_labels, selected_ids)}
-    selected_label_diag = st.selectbox(
-        "Seleccione un aula/sección para diagnosticar",
-        options=list(options_diag.keys()),
-    )
+    selected_label_diag = st.selectbox("Seleccione un aula/sección para diagnosticar", options=list(options_diag.keys()))
     selected_course_diag = options_diag[selected_label_diag]
-
-    st.write("Aula seleccionada:")
-    st.code(f"{selected_label_diag}")
+    st.code(selected_label_diag)
 
     if st.button("Ejecutar diagnóstico Canvas"):
-        with st.spinner("Probando endpoints de Canvas. Esto puede tardar unos segundos..."):
+        with st.spinner("Probando endpoints de Canvas..."):
             results, details = run_canvas_diagnostics(selected_course_diag)
-
         diag_df = pd.DataFrame(results)
-        st.session_state["canvas_diagnostics_df"] = diag_df
-        st.session_state["canvas_diagnostics_details"] = details
-
-        st.subheader("Resultado del diagnóstico")
         st.dataframe(diag_df, use_container_width=True, height=360)
-
         disponibles = int((diag_df["estado"] == "Disponible").sum())
         no_disponibles = int((diag_df["estado"] != "Disponible").sum())
-
         c1, c2 = st.columns(2)
-        with c1:
-            st.success(f"Recursos disponibles: {disponibles}")
-        with c2:
-            st.warning(f"Recursos no disponibles: {no_disponibles}")
-
-        st.subheader("Interpretación rápida")
+        c1.success(f"Recursos disponibles: {disponibles}")
+        c2.warning(f"Recursos no disponibles: {no_disponibles}")
         if not diag_df[diag_df["recurso"].str.contains("Entregas") & (diag_df["estado"] == "Disponible")].empty:
-            st.success(
-                "El token sí tiene acceso a alguna ruta de entregas. La app podrá usar esa ruta para calcular avance con mayor precisión."
-            )
-        else:
-            st.warning(
-                "El token no logró leer entregas en las rutas probadas. La app puede consolidar estudiantes y actividad de acceso, "
-                "pero el avance por actividades quedará limitado hasta contar con permisos o una ruta habilitada por Canvas."
-            )
-
+            st.success("El token sí tiene acceso a rutas de entregas. Puede calcularse avance académico con mayor precisión.")
         with st.expander("Ver detalles técnicos devueltos por Canvas"):
             st.caption("No se muestra el token. Solo se presentan respuestas o errores del API.")
             st.json(details)
 
-    elif "canvas_diagnostics_df" in st.session_state:
-        st.subheader("Último diagnóstico ejecutado")
-        st.dataframe(st.session_state["canvas_diagnostics_df"], use_container_width=True, height=360)
-
 # -------------------------------------------------------------------
-# 4. Carga académica Fase 2.1
+# 4. Carga académica
 # -------------------------------------------------------------------
-elif menu == "4. Carga académica Fase 2.1":
-    st.header("3. Carga de estudiantes, actividades, módulos y avance real")
-
+elif menu == "4. Carga académica":
+    st.header("4. Carga académica desde Canvas")
     selected_ids = st.session_state.get("selected_course_ids", [])
     selected_labels = st.session_state.get("selected_course_labels", [])
-
     if not selected_ids:
-        st.warning("Primero selecciona las aulas/secciones en el menú 2.")
+        st.warning("Primero selecciona aulas/secciones en el menú 2.")
         st.stop()
-
-    st.subheader("Rango de análisis")
-    today = date.today()
-    fecha_inicio, fecha_fin = st.date_input(
-        "Seleccione el rango de fechas del análisis",
-        value=(today - timedelta(days=7), today),
-        help="En esta fase se guarda como referencia del corte. En fases siguientes se usará para comparar reportes históricos.",
-    )
 
     st.write("Aulas/secciones seleccionadas:")
     st.dataframe(pd.DataFrame({"aula_seccion": selected_labels, "canvas_course_id": selected_ids}), use_container_width=True)
 
-    st.warning(
-        "La carga puede tardar si el curso tiene muchos estudiantes o muchas actividades. "
-        "Esta fase intenta traer inscripciones, tareas, módulos y entregas."
-    )
-
     if st.button("Cargar datos académicos desde Canvas"):
         datasets = []
-        progress = st.progress(0)
-        status = st.empty()
-        total = len(selected_ids)
-
-        for idx, (course_id, label) in enumerate(zip(selected_ids, selected_labels), start=1):
-            course_name = label.split(" | ID:")[0]
-            status.info(f"Cargando {idx}/{total}: {course_name}")
-            ok, payload = collect_course_dataset(course_id, course_name)
-            if ok:
-                datasets.append(payload)
-                st.success(f"Datos cargados: {course_name}")
-                for warning_key in ["assignments_warning", "modules_warning", "submissions_warning"]:
-                    if payload.get(warning_key):
-                        st.warning(f"{course_name}: {payload[warning_key]}")
-            else:
-                st.error(f"No se pudo cargar {course_name}")
-                st.write(payload)
-            progress.progress(idx / total)
-
+        with st.spinner("Cargando estudiantes, actividades, módulos y entregas..."):
+            for label, course_id in zip(selected_labels, selected_ids):
+                course_name = label.split(" | ID:")[0]
+                ok, payload = collect_course_dataset(course_id, course_name)
+                if ok:
+                    datasets.append(payload)
+                    st.success(f"Datos cargados: {course_name}")
+                    if payload.get("submissions_warning"):
+                        st.warning(f"{course_name}: {payload.get('submissions_warning')}")
+                else:
+                    st.error(f"No se pudo cargar {course_name}")
+                    st.write(payload)
         st.session_state["datasets"] = datasets
-        df = consolidate_datasets(datasets, fecha_inicio=fecha_inicio, fecha_fin=fecha_fin)
-        st.session_state["student_metrics_df"] = df
-
-        if not df.empty:
-            st.success(f"Carga completada. Se consolidaron {len(df)} registros de estudiantes.")
-            st.dataframe(df, use_container_width=True)
-        else:
-            st.error("No se generaron registros consolidados. Revisa permisos del token o endpoints de Canvas.")
+        raw_df = consolidate_datasets(datasets)
+        st.session_state["student_metrics_df"] = raw_df
+        st.success(f"Carga completada. Se consolidaron {len(raw_df)} registros de estudiantes.")
+        st.dataframe(raw_df, use_container_width=True, height=360)
 
 # -------------------------------------------------------------------
-# 5. Dashboard inicial
+# 5. Análisis Fase 3
 # -------------------------------------------------------------------
-elif menu == "5. Dashboard inicial":
-    st.header("4. Dashboard inicial de avance académico")
-    df = st.session_state.get("student_metrics_df", pd.DataFrame())
-
-    if df is None or df.empty:
-        st.warning("Primero carga los datos académicos en el menú 3.")
+elif menu == "5. Análisis Fase 3":
+    st.header("5. Análisis de avance, brecha y riesgo académico")
+    raw_df = st.session_state.get("student_metrics_df", pd.DataFrame())
+    if raw_df.empty:
+        st.warning("Primero realiza la carga académica en el menú 4.")
         st.stop()
 
-    summary = build_summary(df)
-    c1, c2, c3, c4, c5 = st.columns(5)
+    st.subheader("Parámetros del corte académico")
+    today = date.today()
+    c1, c2, c3, c4 = st.columns(4)
     with c1:
-        metric_card("Total estudiantes", summary["total_estudiantes"], AVE_COLORS["azul"])
+        fecha_inicio_curso = st.date_input("Fecha de inicio del curso", value=today - timedelta(days=21))
     with c2:
-        metric_card("Avance promedio", f'{summary["avance_promedio"]}%', AVE_COLORS["celeste"])
+        fecha_fin_curso = st.date_input("Fecha de finalización del curso", value=today + timedelta(days=21))
     with c3:
-        metric_card("Nunca ingresó", summary["nunca_ingreso"], AVE_COLORS["rojo"])
+        fecha_corte = st.date_input("Fecha de corte", value=today)
     with c4:
-        metric_card("Ingresó no inició", summary["ingreso_no_inicio"], AVE_COLORS["amarillo"])
-    with c5:
-        metric_card("Detenido módulo 1", summary["modulo_1"], AVE_COLORS["verde"])
+        dias_inactividad = st.number_input("Días para alerta de inactividad", min_value=1, max_value=30, value=5)
 
-    st.subheader("Resumen por aula/sección")
-    by_course = df.groupby("curso_aula", dropna=False).agg(
-        estudiantes=("canvas_user_id", "count"),
-        avance_promedio=("avance_real_pct", "mean"),
-        nunca_ingreso=("nunca_ingreso", "sum"),
-        ingreso_no_inicio=("ingreso_no_inicio", "sum"),
-        modulo_1=("inicio_y_modulo_1", "sum"),
-    ).reset_index()
-    by_course["avance_promedio"] = by_course["avance_promedio"].round(2)
-    st.dataframe(by_course, use_container_width=True)
+    if st.button("Calcular análisis Fase 3"):
+        df = add_expected_gap_and_risk(raw_df, fecha_inicio_curso, fecha_fin_curso, fecha_corte, int(dias_inactividad))
+        summary = build_summary(df)
+        st.session_state["student_metrics_df"] = df
+        st.session_state["summary"] = summary
+        st.session_state["fase3_params"] = {
+            "fecha_inicio_curso": str(fecha_inicio_curso),
+            "fecha_fin_curso": str(fecha_fin_curso),
+            "fecha_corte": str(fecha_corte),
+            "dias_inactividad": int(dias_inactividad),
+        }
+        st.success("Análisis Fase 3 calculado correctamente.")
 
-    st.subheader("Distribución por estado base")
-    estado_df = df["estado_base"].value_counts().reset_index()
-    estado_df.columns = ["estado_base", "cantidad"]
-    st.bar_chart(estado_df, x="estado_base", y="cantidad", use_container_width=True)
+    df = st.session_state.get("student_metrics_df", pd.DataFrame())
+    if "nivel_riesgo" in df.columns:
+        summary = st.session_state.get("summary") or build_summary(df)
+        m1, m2, m3, m4 = st.columns(4)
+        with m1:
+            metric_card("Estudiantes", summary["total_estudiantes"], "Total consolidado")
+        with m2:
+            metric_card("Avance esperado", f'{summary["avance_esperado_promedio"]}%', "Según fecha de corte")
+        with m3:
+            metric_card("Avance real", f'{summary["avance_real_promedio"]}%', "Promedio Canvas")
+        with m4:
+            metric_card("Brecha", f'{summary["brecha_promedio"]}%', "Esperado - real")
 
-    st.subheader("Base individual de estudiantes")
-    filtro_estado = st.multiselect("Filtrar por estado base", sorted(df["estado_base"].dropna().unique()))
-    view = df.copy()
-    if filtro_estado:
-        view = view[view["estado_base"].isin(filtro_estado)]
-    st.dataframe(view, use_container_width=True, height=420)
+        r1, r2, r3 = st.columns(3)
+        with r1:
+            metric_card("Riesgo bajo", summary["riesgo_bajo"], "Seguimiento regular")
+        with r2:
+            metric_card("Riesgo medio", summary["riesgo_medio"], "Seguimiento preventivo")
+        with r3:
+            metric_card("Riesgo alto", summary["riesgo_alto"], "Atención prioritaria")
 
-    csv = view.to_csv(index=False).encode("utf-8-sig")
-    st.download_button(
-        "Descargar base individual en CSV",
-        data=csv,
-        file_name="base_individual_fase2.csv",
-        mime="text/csv",
-    )
+        st.subheader("Ranking de causas de riesgo")
+        rank_df = risk_ranking(df)
+        st.dataframe(rank_df, use_container_width=True)
+        if not rank_df.empty:
+            st.bar_chart(rank_df.set_index("causa_riesgo")["cantidad"])
+
+        st.subheader("Comparación por aula/sección")
+        sec_df = section_comparison(df)
+        st.dataframe(sec_df, use_container_width=True)
+
+        st.subheader("Base individual con riesgo")
+        st.dataframe(df, use_container_width=True, height=420)
+        st.download_button(
+            "Descargar base individual CSV",
+            data=df.to_csv(index=False).encode("utf-8-sig"),
+            file_name="base_individual_riesgo_ave.csv",
+            mime="text/csv",
+        )
+    else:
+        st.info("Configura los parámetros y presiona 'Calcular análisis Fase 3'.")
 
 # -------------------------------------------------------------------
-# 6. Resumen de Fase 2.1
+# 6. Guardar corte histórico
 # -------------------------------------------------------------------
-elif menu == "6. Resumen de Fase 2.1":
-    st.header("6. Resumen de avance de Fase 2.1")
+elif menu == "6. Guardar corte histórico":
+    st.header("6. Guardar corte histórico en Supabase")
+    df = st.session_state.get("student_metrics_df", pd.DataFrame())
+    if df.empty or "nivel_riesgo" not in df.columns:
+        st.warning("Primero calcula el análisis Fase 3 en el menú 5.")
+        st.stop()
+
+    params = st.session_state.get("fase3_params", {})
+    selected_ids = st.session_state.get("selected_course_ids", [])
+    selected_labels = st.session_state.get("selected_course_labels", [])
+    course_name = st.session_state.get("course_consolidated_name") or "Curso consolidado AVE"
+
+    c1, c2 = st.columns(2)
+    with c1:
+        nombre_reporte = st.text_input("Nombre del reporte", value=f"Corte {course_name} - {date.today().isoformat()}")
+        usuario_generador = st.text_input("Usuario generador", value="Asesor Académico AVE")
+    with c2:
+        fecha_inicio_analisis = st.date_input("Inicio del rango analizado", value=date.today() - timedelta(days=7))
+        fecha_fin_analisis = st.date_input("Fin del rango analizado", value=date.today())
+
+    st.info("Antes de guardar, confirma que ejecutaste el archivo database/schema_fase3.sql en Supabase.")
+
+    if st.button("Guardar corte en Supabase"):
+        aulas_canvas = [{"label": l, "canvas_course_id": cid} for l, cid in zip(selected_labels, selected_ids)]
+        summary = st.session_state.get("summary") or build_summary(df)
+        keep_cols = [
+            "canvas_course_id", "curso_aula", "canvas_user_id", "nombre", "correo", "section_id", "estado_inscripcion",
+            "ultimo_ingreso", "ultima_entrega", "ultima_actividad", "dias_sin_actividad", "tiempo_total_min",
+            "actividades_total", "actividades_completadas", "actividades_pendientes", "avance_real_pct", "avance_esperado_pct",
+            "brecha_pct", "modulo_maximo", "modulo_maximo_nombre", "estado_base", "puntaje_riesgo", "nivel_riesgo",
+            "causa_principal_riesgo", "causas_riesgo", "recomendacion",
+        ]
+        rows = df[[c for c in keep_cols if c in df.columns]].to_dict(orient="records")
+        ok, result = save_report_snapshot(
+            nombre_reporte=nombre_reporte,
+            curso_consolidado=course_name,
+            fecha_inicio_analisis=str(fecha_inicio_analisis),
+            fecha_fin_analisis=str(fecha_fin_analisis),
+            fecha_inicio_curso=params.get("fecha_inicio_curso", str(fecha_inicio_analisis)),
+            fecha_fin_curso=params.get("fecha_fin_curso", str(fecha_fin_analisis)),
+            aulas_canvas=aulas_canvas,
+            resumen=summary,
+            student_rows=rows,
+            usuario_generador=usuario_generador,
+        )
+        if ok:
+            st.session_state["last_saved_report_id"] = result.get("reporte_id")
+            st.success(f"Corte guardado correctamente. ID de reporte: {result.get('reporte_id')}. Estudiantes guardados: {result.get('estudiantes_guardados')}.")
+        else:
+            st.error("No se pudo guardar el corte histórico.")
+            st.write(result)
+
+    st.subheader("Comparar con reporte anterior")
+    if st.button("Buscar reporte anterior en Supabase"):
+        ok, previous = get_previous_report(course_name, st.session_state.get("last_saved_report_id"))
+        if ok:
+            st.success(f"Reporte anterior encontrado: {previous.get('nombre_reporte')}")
+            prev_summary = previous.get("resumen") or {}
+            current = st.session_state.get("summary") or build_summary(df)
+            comp = pd.DataFrame([
+                {"indicador": "Avance real promedio", "anterior": prev_summary.get("avance_real_promedio"), "actual": current.get("avance_real_promedio")},
+                {"indicador": "Brecha promedio", "anterior": prev_summary.get("brecha_promedio"), "actual": current.get("brecha_promedio")},
+                {"indicador": "Riesgo alto", "anterior": prev_summary.get("riesgo_alto"), "actual": current.get("riesgo_alto")},
+                {"indicador": "Nunca ingresó", "anterior": prev_summary.get("nunca_ingreso"), "actual": current.get("nunca_ingreso")},
+            ])
+            st.dataframe(comp, use_container_width=True)
+        else:
+            st.warning(previous)
+
+# -------------------------------------------------------------------
+# 7. Dashboard ejecutivo
+# -------------------------------------------------------------------
+elif menu == "7. Dashboard ejecutivo":
+    st.header("7. Dashboard ejecutivo")
+    df = st.session_state.get("student_metrics_df", pd.DataFrame())
+    if df.empty or "nivel_riesgo" not in df.columns:
+        st.warning("Primero calcula el análisis Fase 3 en el menú 5.")
+        st.stop()
+    summary = st.session_state.get("summary") or build_summary(df)
+
+    st.subheader(st.session_state.get("course_consolidated_name") or "Curso consolidado AVE")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Total estudiantes", summary["total_estudiantes"])
+    c2.metric("Avance real promedio", f'{summary["avance_real_promedio"]}%')
+    c3.metric("Avance esperado", f'{summary["avance_esperado_promedio"]}%')
+    c4.metric("Brecha promedio", f'{summary["brecha_promedio"]}%')
+
+    st.subheader("Distribución de riesgo")
+    risk_dist = df["nivel_riesgo"].value_counts().reindex(["Bajo", "Medio", "Alto"]).fillna(0).astype(int)
+    st.bar_chart(risk_dist)
+
+    st.subheader("Estudiantes en riesgo alto")
+    high = df[df["nivel_riesgo"] == "Alto"].sort_values(["puntaje_riesgo", "brecha_pct"], ascending=False)
+    cols = ["nombre", "correo", "curso_aula", "avance_real_pct", "avance_esperado_pct", "brecha_pct", "dias_sin_actividad", "causa_principal_riesgo", "recomendacion"]
+    st.dataframe(high[[c for c in cols if c in high.columns]], use_container_width=True, height=360)
+
+# -------------------------------------------------------------------
+# 8. Resumen
+# -------------------------------------------------------------------
+elif menu == "8. Resumen de Fase 3":
+    st.header("8. Resumen de Fase 3")
+    st.write("Esta fase agrega la primera capa real de análisis académico y persistencia histórica.")
     checklist = pd.DataFrame([
-        {"Elemento": "Token Canvas desde interfaz", "Estado": "Implementado"},
-        {"Elemento": "Selección multicurso/aulas como secciones", "Estado": "Implementado"},
-        {"Elemento": "Carga de estudiantes por aula", "Estado": "Implementado"},
-        {"Elemento": "Carga de último ingreso y tiempo de actividad", "Estado": "Implementado"},
-        {"Elemento": "Carga de actividades/tareas", "Estado": "Implementado"},
-        {"Elemento": "Carga de módulos", "Estado": "Implementado"},
-        {"Elemento": "Diagnóstico de permisos Canvas", "Estado": "Implementado"},
-        {"Elemento": "Prueba de endpoints alternativos de entregas", "Estado": "Implementado"},
-        {"Elemento": "Carga de entregas/submissions", "Estado": "Implementado con fallback"},
-        {"Elemento": "Cálculo de avance real básico", "Estado": "Implementado"},
-        {"Elemento": "Clasificación base inicial", "Estado": "Implementado"},
-        {"Elemento": "Riesgo académico con brecha esperada", "Estado": "Pendiente Fase 3"},
-        {"Elemento": "Guardar cortes en Supabase", "Estado": "Pendiente Fase 3"},
-        {"Elemento": "PDF ejecutivo", "Estado": "Pendiente Fase 4"},
+        {"Elemento": "Selección multicurso/secciones", "Estado": "Implementado"},
+        {"Elemento": "Carga de estudiantes, actividades, módulos y entregas", "Estado": "Implementado"},
+        {"Elemento": "Avance esperado según fecha de corte", "Estado": "Implementado"},
+        {"Elemento": "Avance real y brecha", "Estado": "Implementado"},
+        {"Elemento": "Puntaje de riesgo académico", "Estado": "Implementado"},
+        {"Elemento": "Ranking de causas de riesgo", "Estado": "Implementado"},
+        {"Elemento": "Comparación por aula/sección", "Estado": "Implementado"},
+        {"Elemento": "Guardado de corte histórico en Supabase", "Estado": "Implementado"},
+        {"Elemento": "Comparación con reporte anterior", "Estado": "Inicial"},
+        {"Elemento": "Reporte ejecutivo PDF", "Estado": "Pendiente Fase 4"},
     ])
     st.dataframe(checklist, use_container_width=True)
-    st.info(
-        "Al terminar esta fase, la app ya puede diagnosticar qué datos permite leer Canvas con el token, "
-        "probar rutas alternativas de entregas y generar una primera base individual. "
-        "Cuando confirmemos qué endpoint funciona, pasaremos a calcular avance esperado, brecha, riesgo y cortes históricos en Supabase."
-    )
+    st.info("La Fase 4 puede enfocarse en PDF ejecutivo con colores AVE, marca de agua y tablas/gráficos formales.")

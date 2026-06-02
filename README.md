@@ -1,53 +1,41 @@
-# Plataforma Académica AVE UVG - Fase 2.1 Diagnóstico Canvas
+# Plataforma Académica AVE UVG - Fase 3
 
-Esta versión agrega un módulo de diagnóstico para identificar qué endpoints de Canvas permite consultar el token del asesor.
-
-## Incluye
+Esta versión incluye:
 
 - Token Canvas desde la interfaz.
-- Selección multicurso/aulas como secciones consolidadas.
-- Diagnóstico Canvas por aula/sección.
-- Prueba de endpoints:
-  - Perfil del usuario.
-  - Inscripciones / estudiantes.
-  - Usuarios estudiantes del curso.
-  - Actividades / assignments.
-  - Módulos.
-  - Entregas generales agrupadas.
-  - Entregas generales sin agrupar.
-  - Entregas por actividad individual.
-- Carga académica con fallback para entregas por actividad individual.
-- Dashboard inicial.
-- Exportación CSV de base individual.
+- Selección de varias aulas Canvas como secciones consolidadas.
+- Diagnóstico de permisos Canvas.
+- Carga de estudiantes, actividades, módulos y entregas.
+- Cálculo de avance esperado, avance real y brecha.
+- Puntaje y nivel de riesgo académico.
+- Ranking de causas de riesgo.
+- Comparación por sección/aula.
+- Guardado de cortes históricos en Supabase.
+- Comparación inicial con reporte anterior.
 
-## Uso
-
-1. Instalar dependencias:
+## Uso local
 
 ```bash
 pip install -r requirements.txt
-```
-
-2. Ejecutar la app:
-
-```bash
 streamlit run app.py
 ```
 
-3. Flujo sugerido:
+## Supabase
 
-- Ir a **1. Configuración**.
-- Pegar token de Canvas.
-- Probar conexión.
-- Ir a **2. Selección de aulas/secciones**.
-- Cargar cursos y seleccionar aulas.
-- Ir a **3. Diagnóstico Canvas**.
-- Ejecutar diagnóstico para una sección.
-- Revisar qué endpoints están disponibles.
-- Ir a **4. Carga académica Fase 2.1**.
-- Cargar datos académicos.
-- Revisar dashboard.
+1. Copiar `.streamlit/secrets.toml.example` como `.streamlit/secrets.toml`.
+2. Colocar `url` y `key` de Supabase.
+3. Ejecutar en Supabase SQL Editor el archivo:
 
-## Nota
+```text
+database/schema_fase3.sql
+```
 
-Si los endpoints de entregas aparecen como no disponibles, la app puede seguir trabajando con estudiantes, último ingreso y tiempo de actividad, pero el avance por actividades quedará limitado hasta contar con permisos suficientes o una ruta de Canvas habilitada.
+## Flujo recomendado
+
+1. Configuración: ingresar token Canvas.
+2. Selección: elegir aulas/secciones.
+3. Diagnóstico: validar endpoints.
+4. Carga académica: traer datos Canvas.
+5. Análisis Fase 3: configurar fechas y calcular riesgo.
+6. Guardar corte histórico: almacenar en Supabase.
+7. Dashboard ejecutivo: revisar indicadores principales.

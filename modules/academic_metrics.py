@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 import pandas as pd
 
 
@@ -28,7 +27,6 @@ def _module_assignment_map(modules: List[dict]) -> Dict[int, Dict[str, Any]]:
 
 
 def _flatten_grouped_submissions(submissions_payload) -> List[dict]:
-    """Canvas puede devolver grouped=true como lista de grupos por usuario."""
     rows: List[dict] = []
     if not submissions_payload:
         return rows
@@ -42,6 +40,25 @@ def _flatten_grouped_submissions(submissions_payload) -> List[dict]:
         elif isinstance(item, dict):
             rows.append(item)
     return rows
+
+
+def _submission_is_completed(sub: dict) -> bool:
+    submitted = bool(sub.get("submitted_at"))
+    graded = sub.get("score") is not None or sub.get("grade") not in [None, ""]
+    workflow_submitted = sub.get("workflow_state") in ["submitted", "graded", "pending_review"]
+    return submitted or graded or workflow_submitted
+
+
+def _expected_progress(fecha_inicio_curso, fecha_fin_curso, fecha_corte) -> float:
+    start = pd.to_datetime(fecha_inicio_curso).normalize()
+    end = pd.to_datetime(fecha_fin_curso).normalize()
+    cut = pd.to_datetime(fecha_corte).normalize()
+    if pd.isna(start) or pd.isna(end) or end <= start:
+        return 0.0
+    elapsed = (cut - start).days
+    total = (end - start).days
+    value = (elapsed / total) * 100
+    return round(float(max(0, min(100, value))), 2)
 
 
 def build_course_student_metrics(dataset: Dict[str, Any], fecha_inicio=None, fecha_fin=None) -> pd.DataFrame:
@@ -88,10 +105,7 @@ def build_course_student_metrics(dataset: Dict[str, Any], fecha_inicio=None, fec
         max_module_name = None
 
         for s in valid_subs:
-            submitted = bool(s.get("submitted_at"))
-            graded = s.get("score") is not None or s.get("grade") not in [None, ""]
-            workflow_submitted = s.get("workflow_state") in ["submitted", "graded", "pending_review"]
-            if submitted or graded or workflow_submitted:
+            if _submission_is_completed(s):
                 completed.append(s)
                 dt = _parse_dt(s.get("submitted_at") or s.get("graded_at"))
                 if dt is not None and not pd.isna(dt):
@@ -149,9 +163,9 @@ def build_course_student_metrics(dataset: Dict[str, Any], fecha_inicio=None, fec
             "avance_real_pct": avance_real,
             "modulo_maximo": max_module,
             "modulo_maximo_nombre": max_module_name,
-            "nunca_ingreso": nunca_ingreso,
-            "ingreso_no_inicio": ingreso_no_inicio,
-            "inicio_y_modulo_1": inicio_modulo_1,
+            "nunca_ingreso": bool(nunca_ingreso),
+            "ingreso_no_inicio": bool(ingreso_no_inicio),
+            "inicio_y_modulo_1": bool(inicio_modulo_1),
             "estado_base": estado_base,
         })
 
@@ -169,21 +183,163 @@ def consolidate_datasets(datasets: List[Dict[str, Any]], fecha_inicio=None, fech
     return pd.concat(frames, ignore_index=True)
 
 
+def add_expected_gap_and_risk(
+    df: pd.DataFrame,
+    fecha_inicio_curso,
+    fecha_fin_curso,
+    fecha_corte,
+    inactive_days_threshold: int = 5,
+) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame()
+    out = df.copy()
+    expected = _expected_progress(fecha_inicio_curso, fecha_fin_curso, fecha_corte)
+    out["avance_esperado_pct"] = expected
+    out["brecha_pct"] = (out["avance_esperado_pct"] - out["avance_real_pct"]).round(2)
+
+    risk_rows = out.apply(lambda r: _risk_model(r, inactive_days_threshold), axis=1, result_type="expand")
+    risk_rows.columns = ["puntaje_riesgo", "nivel_riesgo", "causa_principal_riesgo", "causas_riesgo", "recomendacion"]
+    out = pd.concat([out, risk_rows], axis=1)
+    return out
+
+
+def _risk_model(row: pd.Series, inactive_days_threshold: int):
+    score = 0
+    causes = []
+
+    if bool(row.get("nunca_ingreso")):
+        score += 40
+        causes.append("Falta de ingreso al curso")
+    if bool(row.get("ingreso_no_inicio")):
+        score += 35
+        causes.append("Ingresó pero no inició actividades")
+    if bool(row.get("inicio_y_modulo_1")):
+        score += 15
+        causes.append("Se quedó en el primer módulo")
+
+    brecha = float(row.get("brecha_pct") or 0)
+    if brecha >= 30:
+        score += 30
+        causes.append("Avance insuficiente")
+    elif brecha >= 15:
+        score += 15
+        causes.append("Brecha moderada de avance")
+
+    dias = row.get("dias_sin_actividad")
+    try:
+        dias_val = int(dias) if dias is not None and not pd.isna(dias) else None
+    except Exception:
+        dias_val = None
+    if dias_val is not None and dias_val >= inactive_days_threshold:
+        score += 20
+        causes.append("Inactividad reciente")
+
+    pendientes = row.get("actividades_pendientes")
+    total = row.get("actividades_total")
+    try:
+        if pendientes is not None and total and float(total) > 0:
+            pending_ratio = float(pendientes) / float(total)
+            if pending_ratio >= 0.70:
+                score += 20
+                causes.append("Actividades pendientes")
+            elif pending_ratio >= 0.40:
+                score += 10
+                causes.append("Pendientes moderados")
+    except Exception:
+        pass
+
+    score = int(min(100, score))
+    if score >= 61:
+        level = "Alto"
+    elif score >= 31:
+        level = "Medio"
+    else:
+        level = "Bajo"
+
+    if len(causes) >= 2:
+        principal = "Combinación de factores"
+    elif causes:
+        principal = causes[0]
+    else:
+        principal = "Avance adecuado"
+
+    recommendation = _recommendation(level, principal)
+    return score, level, principal, "; ".join(causes) if causes else "Sin alertas críticas", recommendation
+
+
+def _recommendation(level: str, principal: str) -> str:
+    if principal == "Falta de ingreso al curso":
+        return "Contactar de inmediato para verificar acceso, credenciales y comprensión inicial de la plataforma."
+    if principal == "Ingresó pero no inició actividades":
+        return "Enviar orientación específica sobre la primera actividad y confirmar que comprende qué debe realizar."
+    if principal == "Combinación de factores":
+        return "Priorizar seguimiento personalizado y registrar intervención académica con compromiso de avance."
+    if principal == "Avance insuficiente":
+        return "Revisar actividades pendientes y acordar un plan corto de recuperación."
+    if principal == "Se quedó en el primer módulo":
+        return "Verificar si existe dificultad conceptual o de navegación en el primer módulo."
+    if level == "Medio":
+        return "Dar seguimiento preventivo y monitorear avance en el próximo corte."
+    return "Mantener monitoreo regular."
+
+
 def build_summary(df: pd.DataFrame) -> Dict[str, Any]:
     if df is None or df.empty:
         return {
             "total_estudiantes": 0,
-            "avance_promedio": 0,
+            "avance_esperado_promedio": 0,
+            "avance_real_promedio": 0,
+            "brecha_promedio": 0,
+            "riesgo_bajo": 0,
+            "riesgo_medio": 0,
+            "riesgo_alto": 0,
             "nunca_ingreso": 0,
             "ingreso_no_inicio": 0,
             "modulo_1": 0,
             "avance_parcial": 0,
+            "avance_insuficiente": 0,
+            "actividades_pendientes": 0,
+            "combinacion_factores": 0,
         }
+
+    def count_col_bool(col):
+        return int(df[col].sum()) if col in df.columns else 0
+
     return {
         "total_estudiantes": int(len(df)),
-        "avance_promedio": round(float(df["avance_real_pct"].mean()), 2),
-        "nunca_ingreso": int(df["nunca_ingreso"].sum()),
-        "ingreso_no_inicio": int(df["ingreso_no_inicio"].sum()),
-        "modulo_1": int(df["inicio_y_modulo_1"].sum()),
-        "avance_parcial": int((df["estado_base"] == "Avance parcial registrado").sum()),
+        "avance_esperado_promedio": round(float(df.get("avance_esperado_pct", pd.Series([0])).mean()), 2),
+        "avance_real_promedio": round(float(df["avance_real_pct"].mean()), 2),
+        "brecha_promedio": round(float(df.get("brecha_pct", pd.Series([0])).mean()), 2),
+        "riesgo_bajo": int((df.get("nivel_riesgo") == "Bajo").sum()) if "nivel_riesgo" in df else 0,
+        "riesgo_medio": int((df.get("nivel_riesgo") == "Medio").sum()) if "nivel_riesgo" in df else 0,
+        "riesgo_alto": int((df.get("nivel_riesgo") == "Alto").sum()) if "nivel_riesgo" in df else 0,
+        "nunca_ingreso": count_col_bool("nunca_ingreso"),
+        "ingreso_no_inicio": count_col_bool("ingreso_no_inicio"),
+        "modulo_1": count_col_bool("inicio_y_modulo_1"),
+        "avance_parcial": int((df["estado_base"] == "Avance parcial registrado").sum()) if "estado_base" in df else 0,
+        "avance_insuficiente": int((df.get("causas_riesgo", "").astype(str).str.contains("Avance insuficiente")).sum()) if "causas_riesgo" in df else 0,
+        "actividades_pendientes": int((df.get("causas_riesgo", "").astype(str).str.contains("Actividades pendientes")).sum()) if "causas_riesgo" in df else 0,
+        "combinacion_factores": int((df.get("causa_principal_riesgo") == "Combinación de factores").sum()) if "causa_principal_riesgo" in df else 0,
     }
+
+
+def risk_ranking(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty or "causa_principal_riesgo" not in df.columns:
+        return pd.DataFrame(columns=["causa_riesgo", "cantidad", "porcentaje"])
+    ranking = df["causa_principal_riesgo"].fillna("Sin clasificación").value_counts().reset_index()
+    ranking.columns = ["causa_riesgo", "cantidad"]
+    ranking["porcentaje"] = (ranking["cantidad"] / len(df) * 100).round(2)
+    return ranking
+
+
+def section_comparison(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame()
+    return df.groupby("curso_aula", dropna=False).agg(
+        estudiantes=("canvas_user_id", "count"),
+        avance_real_promedio=("avance_real_pct", "mean"),
+        brecha_promedio=("brecha_pct", "mean"),
+        riesgo_alto=("nivel_riesgo", lambda s: int((s == "Alto").sum())),
+        riesgo_medio=("nivel_riesgo", lambda s: int((s == "Medio").sum())),
+        nunca_ingreso=("nunca_ingreso", "sum"),
+    ).reset_index().round(2)
