@@ -1,29 +1,40 @@
 # Plataforma Académica AVE UVG - Fase 1
 
-Esta versión permite:
+Esta versión incluye:
 
-- Ingresar el token personal de Canvas desde la interfaz de Streamlit.
-- Probar conexión con Canvas.
-- Probar conexión con Supabase.
-- Cargar cursos desde Canvas.
-- Cargar secciones por curso.
-- Seleccionar una o varias secciones para análisis posterior.
+- Token de Canvas ingresado desde la interfaz de Streamlit.
+- Conexión a Canvas LMS con URL institucional fija: `https://uvg.instructure.com`.
+- Conexión a Supabase desde `secrets.toml`.
+- Carga de cursos desde Canvas.
+- Selección múltiple de cursos/aulas Canvas para analizarlos como secciones equivalentes.
+- Consulta de secciones internas de un curso Canvas, en caso Canvas las tenga agrupadas dentro de un mismo curso.
+- Colores institucionales AVE.
+- Logo AVE incluido.
 
-## Importante sobre el token de Canvas
+## Por qué hay dos formas de seleccionar secciones
 
-El enlace de Canvas viene configurado de fábrica:
+Canvas puede organizar la información de dos maneras:
 
-```text
-https://uvg.instructure.com
+1. Varias secciones internas dentro de un mismo curso Canvas.
+2. Cada sección como un curso/aula Canvas independiente.
+
+En AVE parece utilizarse el segundo caso para algunos cursos, por ejemplo:
+
+- Matemáticas - SECCIÓN - 10 - 2026 - 1
+- Matemáticas - SECCIÓN - 20 - 2026 - 1
+
+Por eso, la opción principal ahora es seleccionar varias aulas/cursos Canvas y consolidarlas para el análisis.
+
+## Instalación
+
+```bash
+pip install -r requirements.txt
+streamlit run app.py
 ```
-
-Cada asesor debe pegar su token personal en la sección **1. Configuración** de la aplicación.
-El token se guarda únicamente durante la sesión activa de Streamlit mediante `st.session_state`.
-No se guarda en el código, no se guarda en `secrets.toml` y se puede limpiar desde la interfaz.
 
 ## Configuración de Supabase
 
-Copiar el archivo:
+Copiar:
 
 ```text
 .streamlit/secrets.toml.example
@@ -35,7 +46,7 @@ como:
 .streamlit/secrets.toml
 ```
 
-Luego colocar:
+y completar:
 
 ```toml
 [supabase]
@@ -43,13 +54,4 @@ url = "URL_DE_SUPABASE"
 key = "KEY_DE_SUPABASE"
 ```
 
-## Instalación
-
-```bash
-pip install -r requirements.txt
-streamlit run app.py
-```
-
-## Fase siguiente
-
-La Fase 2 debe traer estudiantes, último acceso, actividades, módulos y avance real desde Canvas.
+El token de Canvas ya no se coloca en secrets. Se pega directamente en la app.
