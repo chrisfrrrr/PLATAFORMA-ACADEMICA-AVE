@@ -21,9 +21,9 @@ from modules.academic_metrics import (
     section_comparison,
 )
 from modules.ui_styles import apply_ave_styles, metric_card
-from modules.report_pdf import generate_executive_pdf
+from modules.report_pdf import generate_executive_pdf, generate_pending_students_pdf
 
-st.set_page_config(page_title="Plataforma Académica AVE - Fase 4.1", page_icon="📊", layout="wide")
+st.set_page_config(page_title="Plataforma Académica AVE - Fase 4.2", page_icon="📊", layout="wide")
 apply_ave_styles()
 
 # -------------------------------------------------------------------
@@ -79,7 +79,8 @@ menu = st.sidebar.radio(
         "6. Guardar corte histórico",
         "7. Dashboard ejecutivo",
         "8. Reporte PDF ejecutivo",
-        "9. Resumen de Fase 4.1",
+        "9. Reporte de estudiantes pendientes",
+        "10. Resumen de Fase 4.1",
     ],
 )
 
@@ -515,8 +516,99 @@ elif menu == "8. Reporte PDF ejecutivo":
 # -------------------------------------------------------------------
 # 9. Resumen
 # -------------------------------------------------------------------
-elif menu == "9. Resumen de Fase 4.1":
-    st.header("9. Resumen de Fase 4.1")
+elif menu == "9. Reporte de estudiantes pendientes":
+    st.header("9. Reporte de estudiantes pendientes y sin ingreso")
+    df = st.session_state.get("student_metrics_df", pd.DataFrame())
+    if df.empty or "nivel_riesgo" not in df.columns:
+        st.warning("Primero calcula el análisis Fase 4.1 en el menú 5.")
+        st.stop()
+
+    summary = st.session_state.get("summary") or build_summary(df)
+    params = st.session_state.get("fase3_params", {})
+    selected_ids = st.session_state.get("selected_course_ids", [])
+    selected_labels = st.session_state.get("selected_course_labels", [])
+    course_name = st.session_state.get("course_consolidated_name") or "Curso consolidado AVE"
+
+    st.markdown(
+        """
+        Este segundo reporte está diseñado para seguimiento operativo. Incluye a estudiantes que nunca ingresaron,
+        ingresaron pero no iniciaron actividades, tienen actividades pendientes o presentan brecha de avance.
+        """
+    )
+
+    c1, c2 = st.columns(2)
+    with c1:
+        nombre_reporte_pend = st.text_input(
+            "Nombre del reporte de pendientes",
+            value=f"Reporte estudiantes pendientes {course_name} - {date.today().isoformat()}",
+        )
+        usuario_generador_pend = st.text_input(
+            "Responsable / usuario generador",
+            value="Ing. Christian Pocol - Asesor Académico AVE",
+            key="usuario_generador_pendientes",
+        )
+    with c2:
+        fecha_inicio_pend = st.date_input("Inicio del rango", value=date.today() - timedelta(days=7), key="fecha_inicio_pendientes")
+        fecha_fin_pend = st.date_input("Fin del rango", value=date.today(), key="fecha_fin_pendientes")
+
+    # Vista previa del universo operativo
+    preview = df.copy()
+    mask = preview.get("nunca_ingreso", False).astype(bool) | preview.get("ingreso_no_inicio", False).astype(bool)
+    if "actividades_pendientes" in preview.columns:
+        mask = mask | (pd.to_numeric(preview["actividades_pendientes"], errors="coerce").fillna(0) > 0)
+    if "brecha_pct" in preview.columns:
+        mask = mask | (pd.to_numeric(preview["brecha_pct"], errors="coerce").fillna(0) >= 15)
+    if "nivel_riesgo" in preview.columns:
+        mask = mask | preview["nivel_riesgo"].astype(str).isin(["Alto", "Medio"])
+    preview = preview[mask].copy()
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Pendientes priorizados", len(preview))
+    m2.metric("Nunca ingresaron", int(preview.get("nunca_ingreso", pd.Series(dtype=bool)).fillna(False).astype(bool).sum()) if not preview.empty else 0)
+    m3.metric("Ingresaron sin iniciar", int(preview.get("ingreso_no_inicio", pd.Series(dtype=bool)).fillna(False).astype(bool).sum()) if not preview.empty else 0)
+    m4.metric("Riesgo alto/medio", int(preview["nivel_riesgo"].astype(str).isin(["Alto", "Medio"]).sum()) if not preview.empty and "nivel_riesgo" in preview else 0)
+
+    cols = ["nombre", "correo", "curso_aula", "estado_base", "avance_real_pct", "avance_esperado_pct", "brecha_pct", "actividades_pendientes", "ultima_actividad", "causa_principal_riesgo", "recomendacion"]
+    st.subheader("Vista previa de estudiantes incluidos")
+    st.dataframe(preview[[c for c in cols if c in preview.columns]].head(100), use_container_width=True, height=340)
+
+    aulas_canvas = [{"label": l, "canvas_course_id": cid} for l, cid in zip(selected_labels, selected_ids)]
+
+    if st.button("Generar PDF de estudiantes pendientes"):
+        try:
+            pdf_bytes = generate_pending_students_pdf(
+                df=df,
+                summary=summary,
+                course_name=course_name,
+                report_name=nombre_reporte_pend,
+                fecha_inicio_analisis=str(fecha_inicio_pend),
+                fecha_fin_analisis=str(fecha_fin_pend),
+                fecha_corte=params.get("fecha_corte", str(fecha_fin_pend)),
+                usuario_generador=usuario_generador_pend,
+                aulas_canvas=aulas_canvas,
+                logo_path="assets/logo_ave.jpg",
+            )
+            st.session_state["last_pending_pdf_bytes"] = pdf_bytes
+            st.success("PDF de estudiantes pendientes generado correctamente.")
+        except Exception as e:
+            st.error("No se pudo generar el PDF de estudiantes pendientes.")
+            st.exception(e)
+
+    if st.session_state.get("last_pending_pdf_bytes"):
+        safe_name = (nombre_reporte_pend or "reporte_estudiantes_pendientes_ave").replace(" ", "_").replace("/", "-")
+        st.download_button(
+            "Descargar reporte de estudiantes pendientes PDF",
+            data=st.session_state["last_pending_pdf_bytes"],
+            file_name=f"{safe_name}.pdf",
+            mime="application/pdf",
+        )
+        st.info("Este reporte es independiente del reporte ejecutivo y está orientado al seguimiento operativo de estudiantes.")
+
+# -------------------------------------------------------------------
+# 10. Resumen
+# -------------------------------------------------------------------
+elif menu == "10. Resumen de Fase 4.1":
+    st.header("10. Resumen de Fase 4.1")
     st.write("Esta fase enriquece el reporte PDF con gráficas, estados académicos, tendencias, cohortes y ranking de causas.")
     checklist = pd.DataFrame([
         {"Elemento": "Selección multicurso/secciones", "Estado": "Implementado"},

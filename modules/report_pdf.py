@@ -411,6 +411,217 @@ def _footer_canvas(canvas, doc, course_name=""):
     canvas.restoreState()
 
 
+
+
+def _pending_status(row: pd.Series) -> str:
+    """Clasifica estudiantes pendientes para el reporte operativo."""
+    if bool(row.get("nunca_ingreso")):
+        return "Nunca ingresó al curso"
+    if bool(row.get("ingreso_no_inicio")):
+        return "Ingresó pero no inició actividades"
+    try:
+        pendientes = float(row.get("actividades_pendientes") or 0)
+        total = float(row.get("actividades_total") or 0)
+        if total > 0 and pendientes > 0:
+            return "Tiene actividades pendientes"
+    except Exception:
+        pass
+    try:
+        brecha = float(row.get("brecha_pct") or 0)
+        if brecha >= 15:
+            return "Tiene brecha de avance"
+    except Exception:
+        pass
+    return "Seguimiento regular"
+
+
+def _pending_priority(row: pd.Series) -> int:
+    if bool(row.get("nunca_ingreso")):
+        return 1
+    if bool(row.get("ingreso_no_inicio")):
+        return 2
+    try:
+        if float(row.get("brecha_pct") or 0) >= 30:
+            return 3
+    except Exception:
+        pass
+    try:
+        pendientes = float(row.get("actividades_pendientes") or 0)
+        total = float(row.get("actividades_total") or 0)
+        if total > 0 and pendientes / total >= 0.40:
+            return 4
+    except Exception:
+        pass
+    return 5
+
+
+def _pending_action(status: str) -> str:
+    if status == "Nunca ingresó al curso":
+        return "Contacto inmediato para validar acceso, credenciales y orientación inicial."
+    if status == "Ingresó pero no inició actividades":
+        return "Enviar guía de primera actividad y confirmar comprensión de instrucciones."
+    if status == "Tiene actividades pendientes":
+        return "Solicitar plan corto de recuperación de actividades pendientes."
+    if status == "Tiene brecha de avance":
+        return "Revisar avance esperado y acordar meta de recuperación para el próximo corte."
+    return "Mantener monitoreo preventivo."
+
+
+def _build_pending_df(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame()
+    work = df.copy()
+    if "estado_pendiente" not in work.columns:
+        work["estado_pendiente"] = work.apply(_pending_status, axis=1)
+    work["prioridad_pendiente"] = work.apply(_pending_priority, axis=1)
+    work["accion_sugerida"] = work["estado_pendiente"].apply(_pending_action)
+
+    mask = (
+        work.get("nunca_ingreso", False).astype(bool)
+        | work.get("ingreso_no_inicio", False).astype(bool)
+    )
+    if "actividades_pendientes" in work.columns:
+        mask = mask | (pd.to_numeric(work["actividades_pendientes"], errors="coerce").fillna(0) > 0)
+    if "brecha_pct" in work.columns:
+        mask = mask | (pd.to_numeric(work["brecha_pct"], errors="coerce").fillna(0) >= 15)
+    if "nivel_riesgo" in work.columns:
+        mask = mask | work["nivel_riesgo"].astype(str).isin(["Alto", "Medio"])
+
+    work = work[mask].copy()
+    sort_cols = [c for c in ["prioridad_pendiente", "puntaje_riesgo", "brecha_pct", "actividades_pendientes"] if c in work.columns]
+    ascending = [True] + [False] * (len(sort_cols) - 1)
+    if sort_cols:
+        work = work.sort_values(sort_cols, ascending=ascending, na_position="last")
+    return work
+
+
+def generate_pending_students_pdf(
+    df: pd.DataFrame,
+    summary: dict,
+    course_name: str,
+    report_name: str,
+    fecha_inicio_analisis: str,
+    fecha_fin_analisis: str,
+    fecha_corte: str | None = None,
+    usuario_generador: str = "Asesor Academico AVE",
+    aulas_canvas: list | None = None,
+    logo_path: str = "assets/logo_ave.jpg",
+) -> bytes:
+    """Genera un segundo PDF operativo con estudiantes pendientes y sin ingreso."""
+    pending = _build_pending_df(df)
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=landscape(letter),
+        rightMargin=0.45 * inch,
+        leftMargin=0.45 * inch,
+        topMargin=0.68 * inch,
+        bottomMargin=0.55 * inch,
+        title=report_name,
+    )
+    styles = _make_styles()
+    story = []
+
+    logo = Image(logo_path, width=1.25 * inch, height=0.82 * inch) if logo_path and Path(logo_path).exists() else ""
+    title_block = [
+        Paragraph("Reporte de estudiantes pendientes y sin ingreso", styles["AveTitle"]),
+        Paragraph(f"<b>Curso:</b> {course_name}", styles["AveSubtitle"]),
+        Paragraph(f"<b>Reporte:</b> {report_name}", styles["AveSubtitle"]),
+        Paragraph(f"<b>Rango analizado:</b> {fecha_inicio_analisis} al {fecha_fin_analisis} &nbsp;&nbsp; <b>Fecha de corte:</b> {fecha_corte or fecha_fin_analisis}", styles["AveSubtitle"]),
+        Paragraph(f"<b>Generado por:</b> {usuario_generador} &nbsp;&nbsp; <b>Fecha de generacion:</b> {datetime.now().strftime('%Y-%m-%d %H:%M')}", styles["AveSubtitle"]),
+    ]
+    header = Table([[logo, title_block]], colWidths=[1.45 * inch, 8.3 * inch])
+    header.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE")]))
+    story.append(header)
+    story.append(Spacer(1, 0.14 * inch))
+
+    total_pend = len(pending)
+    n_nunca = int(pending.get("nunca_ingreso", pd.Series(dtype=bool)).fillna(False).astype(bool).sum()) if not pending.empty else 0
+    n_no_inicio = int(pending.get("ingreso_no_inicio", pd.Series(dtype=bool)).fillna(False).astype(bool).sum()) if not pending.empty else 0
+    n_pendientes = int((pd.to_numeric(pending.get("actividades_pendientes", pd.Series(dtype=float)), errors="coerce").fillna(0) > 0).sum()) if not pending.empty else 0
+    n_brecha = int((pd.to_numeric(pending.get("brecha_pct", pd.Series(dtype=float)), errors="coerce").fillna(0) >= 15).sum()) if not pending.empty else 0
+
+    cards = [
+        ("Pendientes priorizados", _num(total_pend)),
+        ("Nunca ingresaron", _num(n_nunca)),
+        ("Ingresaron sin iniciar", _num(n_no_inicio)),
+        ("Con actividades pendientes", _num(n_pendientes)),
+        ("Con brecha >= 15%", _num(n_brecha)),
+        ("Total del curso", _num(summary.get("total_estudiantes", len(df) if df is not None else 0))),
+    ]
+    row = [[Paragraph(value, styles["AveMetric"]), Paragraph(label, styles["AveMetricLabel"])] for label, value in cards]
+    metric_table = Table([row], colWidths=[1.42 * inch] * len(cards))
+    metric_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f4f8ff")),
+        ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#d6e6ff")),
+        ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#d6e6ff")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 8),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+    ]))
+    story.append(metric_table)
+    story.append(Spacer(1, 0.12 * inch))
+
+    story.append(Paragraph("Propósito del reporte", styles["AveSection"]))
+    story.append(Paragraph(
+        "Este reporte operativo separa a los estudiantes que requieren seguimiento inmediato por falta de ingreso, ausencia de inicio, actividades pendientes o brecha de avance. Su finalidad es facilitar el contacto académico y priorizar acciones de acompañamiento.",
+        styles["AveBody"],
+    ))
+    story.append(Spacer(1, 0.10 * inch))
+
+    if not pending.empty:
+        status_counts = pending["estado_pendiente"].value_counts().reset_index()
+        status_counts.columns = ["estado", "cantidad"]
+        status_img = _bar_chart(status_counts["estado"].tolist(), status_counts["cantidad"].tolist(), title="Distribución de estudiantes pendientes", horizontal=True, color=AVE_ORANGE, width=5.0*inch, height=2.7*inch)
+        status_data = [["Estado", "Cantidad"]]
+        for _, r in status_counts.iterrows():
+            status_data.append([_short(r["estado"], 44), _num(r["cantidad"])])
+        story.append(Table([[status_img, _table(status_data, col_widths=[2.6*inch, 0.9*inch], font_size=7.1, header_bg=AVE_BLUE)]], colWidths=[5.25*inch, 3.8*inch], style=[("VALIGN", (0,0), (-1,-1), "TOP")]))
+
+        sec_col = "curso_aula" if "curso_aula" in pending.columns else None
+        if sec_col:
+            sec_counts = pending.groupby(sec_col).size().reset_index(name="cantidad").sort_values("cantidad", ascending=False)
+            sec_data = [["Aula/sección", "Pendientes", "Nunca ingresó", "Ingresó sin iniciar"]]
+            for _, r in sec_counts.iterrows():
+                sec_name = r[sec_col]
+                block = pending[pending[sec_col].eq(sec_name)]
+                sec_data.append([
+                    _short(sec_name, 52), _num(r["cantidad"]),
+                    _num(block.get("nunca_ingreso", pd.Series(dtype=bool)).fillna(False).astype(bool).sum()),
+                    _num(block.get("ingreso_no_inicio", pd.Series(dtype=bool)).fillna(False).astype(bool).sum()),
+                ])
+            story.append(KeepTogether([
+                Paragraph("Pendientes por aula/sección", styles["AveSection"]),
+                _table(sec_data, col_widths=[5.2*inch, 1.0*inch, 1.1*inch, 1.2*inch], font_size=7.0, header_bg=AVE_BLUE),
+            ]))
+    else:
+        story.append(Paragraph("No se identificaron estudiantes pendientes bajo los criterios definidos para este corte.", styles["AveBody"]))
+
+    story.append(PageBreak())
+    story.append(Paragraph("Listado operativo de estudiantes pendientes", styles["AveSection"]))
+    if pending.empty:
+        story.append(Paragraph("No hay estudiantes para mostrar.", styles["AveBody"]))
+    else:
+        data = [["No.", "Estudiante", "Correo", "Aula/sección", "Estado", "Real", "Esperado", "Brecha", "Pend.", "Última act.", "Acción sugerida"]]
+        for i, (_, r) in enumerate(pending.iterrows(), start=1):
+            last_act = _safe(r.get("ultima_actividad"), "Sin registro")
+            try:
+                if hasattr(last_act, "strftime"):
+                    last_act = last_act.strftime("%Y-%m-%d")
+            except Exception:
+                pass
+            data.append([
+                str(i), _short(r.get("nombre"), 25), _short(r.get("correo"), 27), _short(r.get("curso_aula"), 24),
+                _short(r.get("estado_pendiente"), 28), _pct(r.get("avance_real_pct")), _pct(r.get("avance_esperado_pct")), _pct(r.get("brecha_pct")),
+                _num(r.get("actividades_pendientes")), str(last_act)[:10], _short(r.get("accion_sugerida"), 48),
+            ])
+        story.append(_table(data, col_widths=[0.32*inch, 1.18*inch, 1.25*inch, 1.05*inch, 1.18*inch, 0.45*inch, 0.52*inch, 0.48*inch, 0.38*inch, 0.62*inch, 2.0*inch], font_size=5.7, header_bg=AVE_BLUE))
+        story.append(Spacer(1, 0.08*inch))
+        story.append(Paragraph("Sugerencia: usar este listado como base de contacto y actualizar el resultado de la intervención en el siguiente corte histórico.", styles["AveSmall"]))
+
+    doc.build(story, onFirstPage=lambda c, d: _footer_canvas(c, d, course_name), onLaterPages=lambda c, d: _footer_canvas(c, d, course_name))
+    return buffer.getvalue()
+
 def generate_executive_pdf(
     df: pd.DataFrame,
     summary: dict,
