@@ -1,4 +1,4 @@
-# Plataforma Académica AVE UVG - Fase 3
+# Plataforma Académica AVE UVG - Fase 3.1
 
 Esta versión incluye:
 
@@ -36,6 +36,11 @@ database/schema_fase3.sql
 2. Selección: elegir aulas/secciones.
 3. Diagnóstico: validar endpoints.
 4. Carga académica: traer datos Canvas.
-5. Análisis Fase 3: configurar fechas y calcular riesgo.
+5. Análisis Fase 3.1: configurar fechas y calcular riesgo.
 6. Guardar corte histórico: almacenar en Supabase.
 7. Dashboard ejecutivo: revisar indicadores principales.
+
+
+## Corrección Fase 3.1
+
+Se corrigió el guardado histórico en Supabase para convertir valores vacíos de fecha, como NaT, a NULL antes de insertarlos en columnas timestamp.

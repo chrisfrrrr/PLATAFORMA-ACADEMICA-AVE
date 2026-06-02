@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
+import math
+
+import pandas as pd
 import streamlit as st
 from supabase import create_client
 
@@ -22,18 +25,42 @@ def test_supabase_connection():
         return False, str(e)
 
 
+def _clean_value(value: Any) -> Any:
+    """Convierte valores de Pandas/Numpy a formatos aceptados por Supabase.
+
+    Canvas puede devolver campos vacíos que Pandas representa como NaT o NaN.
+    Supabase/PostgreSQL no acepta el texto "NaT" en columnas timestamptz, por eso
+    estos valores se transforman explícitamente a None antes de guardar.
+    """
+    if value is None:
+        return None
+
+    try:
+        if pd.isna(value):
+            return None
+    except Exception:
+        pass
+
+    if isinstance(value, float) and math.isnan(value):
+        return None
+
+    if hasattr(value, "isoformat"):
+        try:
+            return value.isoformat()
+        except Exception:
+            return None
+
+    if isinstance(value, dict):
+        return {k: _clean_value(v) for k, v in value.items()}
+
+    if isinstance(value, list):
+        return [_clean_value(v) for v in value]
+
+    return value
+
+
 def _clean_record(record: Dict[str, Any]) -> Dict[str, Any]:
-    clean = {}
-    for k, v in record.items():
-        if hasattr(v, "isoformat"):
-            clean[k] = v.isoformat()
-        elif str(type(v)).find("Timestamp") >= 0:
-            clean[k] = None if str(v) == "NaT" else v.isoformat()
-        elif v != v:  # NaN
-            clean[k] = None
-        else:
-            clean[k] = v
-    return clean
+    return {k: _clean_value(v) for k, v in record.items()}
 
 
 def save_report_snapshot(
