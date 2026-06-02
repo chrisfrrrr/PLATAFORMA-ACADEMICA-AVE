@@ -1,1 +1,1 @@
-# Módulos de la Plataforma Académica AVE UVG
+# Módulos internos de Plataforma Académica AVE
