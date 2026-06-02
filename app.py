@@ -10,13 +10,14 @@ from modules.canvas_client import (
     get_canvas_courses,
     get_course_sections,
     collect_course_dataset,
+    run_canvas_diagnostics,
 )
 from modules.supabase_client import test_supabase_connection
 from modules.academic_metrics import consolidate_datasets, build_summary
 from modules.ui_styles import apply_ave_styles, AVE_COLORS, metric_card
 
 st.set_page_config(
-    page_title="Plataforma Académica AVE - Fase 2",
+    page_title="Plataforma Académica AVE - Fase 2.1",
     page_icon="📊",
     layout="wide",
 )
@@ -43,7 +44,7 @@ with col_title:
         """
         <div class="ave-title">Plataforma Académica AVE UVG</div>
         <div class="ave-subtitle">
-        Fase 2: carga de estudiantes, accesos, actividades, módulos y avance real desde Canvas.
+        Fase 2.1: diagnóstico de permisos Canvas, carga académica y rutas alternativas para entregas.
         </div>
         """,
         unsafe_allow_html=True,
@@ -66,9 +67,10 @@ menu = st.sidebar.radio(
     [
         "1. Configuración",
         "2. Selección de aulas/secciones",
-        "3. Carga académica Fase 2",
-        "4. Dashboard inicial",
-        "5. Resumen de Fase 2",
+        "3. Diagnóstico Canvas",
+        "4. Carga académica Fase 2.1",
+        "5. Dashboard inicial",
+        "6. Resumen de Fase 2.1",
     ],
 )
 
@@ -185,9 +187,75 @@ elif menu == "2. Selección de aulas/secciones":
                 st.caption("Primero seleccione al menos un aula Canvas.")
 
 # -------------------------------------------------------------------
-# 3. Carga académica Fase 2
+# 3. Diagnóstico Canvas
 # -------------------------------------------------------------------
-elif menu == "3. Carga académica Fase 2":
+elif menu == "3. Diagnóstico Canvas":
+    st.header("3. Diagnóstico de permisos y endpoints de Canvas")
+    st.info(
+        "Este diagnóstico permite saber exactamente qué información deja leer Canvas con el token del asesor: "
+        "estudiantes, actividades, módulos y entregas. Sirve para explicar los avisos amarillos y ajustar la lógica de avance."
+    )
+
+    selected_ids = st.session_state.get("selected_course_ids", [])
+    selected_labels = st.session_state.get("selected_course_labels", [])
+
+    if not selected_ids:
+        st.warning("Primero selecciona al menos un aula/sección en el menú 2.")
+        st.stop()
+
+    options_diag = {label: cid for label, cid in zip(selected_labels, selected_ids)}
+    selected_label_diag = st.selectbox(
+        "Seleccione un aula/sección para diagnosticar",
+        options=list(options_diag.keys()),
+    )
+    selected_course_diag = options_diag[selected_label_diag]
+
+    st.write("Aula seleccionada:")
+    st.code(f"{selected_label_diag}")
+
+    if st.button("Ejecutar diagnóstico Canvas"):
+        with st.spinner("Probando endpoints de Canvas. Esto puede tardar unos segundos..."):
+            results, details = run_canvas_diagnostics(selected_course_diag)
+
+        diag_df = pd.DataFrame(results)
+        st.session_state["canvas_diagnostics_df"] = diag_df
+        st.session_state["canvas_diagnostics_details"] = details
+
+        st.subheader("Resultado del diagnóstico")
+        st.dataframe(diag_df, use_container_width=True, height=360)
+
+        disponibles = int((diag_df["estado"] == "Disponible").sum())
+        no_disponibles = int((diag_df["estado"] != "Disponible").sum())
+
+        c1, c2 = st.columns(2)
+        with c1:
+            st.success(f"Recursos disponibles: {disponibles}")
+        with c2:
+            st.warning(f"Recursos no disponibles: {no_disponibles}")
+
+        st.subheader("Interpretación rápida")
+        if not diag_df[diag_df["recurso"].str.contains("Entregas") & (diag_df["estado"] == "Disponible")].empty:
+            st.success(
+                "El token sí tiene acceso a alguna ruta de entregas. La app podrá usar esa ruta para calcular avance con mayor precisión."
+            )
+        else:
+            st.warning(
+                "El token no logró leer entregas en las rutas probadas. La app puede consolidar estudiantes y actividad de acceso, "
+                "pero el avance por actividades quedará limitado hasta contar con permisos o una ruta habilitada por Canvas."
+            )
+
+        with st.expander("Ver detalles técnicos devueltos por Canvas"):
+            st.caption("No se muestra el token. Solo se presentan respuestas o errores del API.")
+            st.json(details)
+
+    elif "canvas_diagnostics_df" in st.session_state:
+        st.subheader("Último diagnóstico ejecutado")
+        st.dataframe(st.session_state["canvas_diagnostics_df"], use_container_width=True, height=360)
+
+# -------------------------------------------------------------------
+# 4. Carga académica Fase 2.1
+# -------------------------------------------------------------------
+elif menu == "4. Carga académica Fase 2.1":
     st.header("3. Carga de estudiantes, actividades, módulos y avance real")
 
     selected_ids = st.session_state.get("selected_course_ids", [])
@@ -245,9 +313,9 @@ elif menu == "3. Carga académica Fase 2":
             st.error("No se generaron registros consolidados. Revisa permisos del token o endpoints de Canvas.")
 
 # -------------------------------------------------------------------
-# 4. Dashboard inicial
+# 5. Dashboard inicial
 # -------------------------------------------------------------------
-elif menu == "4. Dashboard inicial":
+elif menu == "5. Dashboard inicial":
     st.header("4. Dashboard inicial de avance académico")
     df = st.session_state.get("student_metrics_df", pd.DataFrame())
 
@@ -300,10 +368,10 @@ elif menu == "4. Dashboard inicial":
     )
 
 # -------------------------------------------------------------------
-# 5. Resumen de Fase 2
+# 6. Resumen de Fase 2.1
 # -------------------------------------------------------------------
-elif menu == "5. Resumen de Fase 2":
-    st.header("5. Resumen de avance de Fase 2")
+elif menu == "6. Resumen de Fase 2.1":
+    st.header("6. Resumen de avance de Fase 2.1")
     checklist = pd.DataFrame([
         {"Elemento": "Token Canvas desde interfaz", "Estado": "Implementado"},
         {"Elemento": "Selección multicurso/aulas como secciones", "Estado": "Implementado"},
@@ -311,7 +379,9 @@ elif menu == "5. Resumen de Fase 2":
         {"Elemento": "Carga de último ingreso y tiempo de actividad", "Estado": "Implementado"},
         {"Elemento": "Carga de actividades/tareas", "Estado": "Implementado"},
         {"Elemento": "Carga de módulos", "Estado": "Implementado"},
-        {"Elemento": "Carga de entregas/submissions", "Estado": "Implementado"},
+        {"Elemento": "Diagnóstico de permisos Canvas", "Estado": "Implementado"},
+        {"Elemento": "Prueba de endpoints alternativos de entregas", "Estado": "Implementado"},
+        {"Elemento": "Carga de entregas/submissions", "Estado": "Implementado con fallback"},
         {"Elemento": "Cálculo de avance real básico", "Estado": "Implementado"},
         {"Elemento": "Clasificación base inicial", "Estado": "Implementado"},
         {"Elemento": "Riesgo académico con brecha esperada", "Estado": "Pendiente Fase 3"},
@@ -320,6 +390,7 @@ elif menu == "5. Resumen de Fase 2":
     ])
     st.dataframe(checklist, use_container_width=True)
     st.info(
-        "Al terminar esta fase, la app ya puede traer estudiantes y generar una primera base individual. "
-        "La siguiente fase será calcular avance esperado, brecha, nivel de riesgo y guardar el corte en Supabase."
+        "Al terminar esta fase, la app ya puede diagnosticar qué datos permite leer Canvas con el token, "
+        "probar rutas alternativas de entregas y generar una primera base individual. "
+        "Cuando confirmemos qué endpoint funciona, pasaremos a calcular avance esperado, brecha, riesgo y cortes históricos en Supabase."
     )
