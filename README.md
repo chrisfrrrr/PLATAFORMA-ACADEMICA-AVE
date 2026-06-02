@@ -1,26 +1,30 @@
-# Plataforma Académica AVE UVG - Fase 4
+# Plataforma Académica AVE UVG - Fase 4.1
 
-Esta versión incorpora el reporte ejecutivo PDF con identidad visual AVE.
+Esta versión incorpora el **reporte ejecutivo PDF avanzado** para análisis académico en AVE UVG.
 
 ## Incluye
 
-- Token Canvas desde la interfaz.
-- Selección multicurso/aulas Canvas como secciones consolidadas.
+- Conexión con Canvas mediante token ingresado desde la interfaz.
+- Selección multicurso/aulas como secciones consolidadas.
 - Diagnóstico Canvas.
 - Carga académica de estudiantes, actividades, módulos y entregas.
-- Cálculo de avance esperado, avance real, brecha y riesgo académico.
-- Ranking de causas de riesgo.
+- Cálculo de avance esperado, avance real y brecha.
+- Clasificación de riesgo académico.
 - Guardado de cortes históricos en Supabase.
-- Generación de PDF ejecutivo con colores AVE y marca de agua.
+- Comparación con reporte anterior.
+- PDF ejecutivo enriquecido con:
+  - indicadores generales;
+  - gráficas de riesgo;
+  - estados académicos del estudiantado;
+  - velocidad de avance;
+  - brecha real vs esperada;
+  - comparación entre cohortes/secciones;
+  - tendencia respecto al reporte anterior;
+  - ranking de causas de riesgo;
+  - estudiantes priorizados para seguimiento;
+  - marca de agua del desarrollador.
 
-## Colores AVE
-
-- Azul: #0f1c75
-- Celeste: #1c73f5
-- Verde: #00ab0d
-- Amarillo: #ffb500
-
-## Ejecución local
+## Instalación
 
 ```bash
 pip install -r requirements.txt
@@ -29,8 +33,16 @@ streamlit run app.py
 
 ## Supabase
 
-Si ya ejecutaste `database/schema_fase3.sql` en la fase anterior, no necesitas crear tablas nuevas para esta fase.
+Si ya ejecutaste `database/schema_fase3.sql` en una fase anterior, no necesitas recrear las tablas.
 
-## Recomendación
+Configura `.streamlit/secrets.toml` con:
 
-Usa la clave `service_role` en los secretos de Streamlit para guardar cortes históricos con RLS activado.
+```toml
+[supabase]
+url = "https://TU-PROYECTO.supabase.co"
+key = "TU_SERVICE_ROLE_KEY"
+```
+
+## Nota
+
+Para que el PDF muestre tendencia histórica, primero debe existir al menos un corte guardado previamente en Supabase para el mismo curso consolidado.

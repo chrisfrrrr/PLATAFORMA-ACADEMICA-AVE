@@ -23,7 +23,7 @@ from modules.academic_metrics import (
 from modules.ui_styles import apply_ave_styles, metric_card
 from modules.report_pdf import generate_executive_pdf
 
-st.set_page_config(page_title="Plataforma Académica AVE - Fase 4", page_icon="📊", layout="wide")
+st.set_page_config(page_title="Plataforma Académica AVE - Fase 4.1", page_icon="📊", layout="wide")
 apply_ave_styles()
 
 # -------------------------------------------------------------------
@@ -50,7 +50,7 @@ with col_title:
         """
         <div class="ave-title">Plataforma Académica AVE UVG</div>
         <div class="ave-subtitle">
-        Fase 4: reporte ejecutivo PDF con identidad visual AVE, marcas de agua e indicadores académicos.
+        Fase 4.1: reporte ejecutivo PDF enriquecido con gráficas, tendencias, cohortes y ranking de causas.
         </div>
         """,
         unsafe_allow_html=True,
@@ -75,11 +75,11 @@ menu = st.sidebar.radio(
         "2. Selección de aulas/secciones",
         "3. Diagnóstico Canvas",
         "4. Carga académica",
-        "5. Análisis Fase 4",
+        "5. Análisis Fase 4.1",
         "6. Guardar corte histórico",
         "7. Dashboard ejecutivo",
         "8. Reporte PDF ejecutivo",
-        "9. Resumen de Fase 4",
+        "9. Resumen de Fase 4.1",
     ],
 )
 
@@ -249,9 +249,9 @@ elif menu == "4. Carga académica":
         st.dataframe(raw_df, use_container_width=True, height=360)
 
 # -------------------------------------------------------------------
-# 5. Análisis Fase 4
+# 5. Análisis Fase 4.1
 # -------------------------------------------------------------------
-elif menu == "5. Análisis Fase 4":
+elif menu == "5. Análisis Fase 4.1":
     st.header("5. Análisis de avance, brecha y riesgo académico")
     raw_df = st.session_state.get("student_metrics_df", pd.DataFrame())
     if raw_df.empty:
@@ -270,7 +270,7 @@ elif menu == "5. Análisis Fase 4":
     with c4:
         dias_inactividad = st.number_input("Días para alerta de inactividad", min_value=1, max_value=30, value=5)
 
-    if st.button("Calcular análisis Fase 4"):
+    if st.button("Calcular análisis Fase 4.1"):
         df = add_expected_gap_and_risk(raw_df, fecha_inicio_curso, fecha_fin_curso, fecha_corte, int(dias_inactividad))
         summary = build_summary(df)
         st.session_state["student_metrics_df"] = df
@@ -281,7 +281,7 @@ elif menu == "5. Análisis Fase 4":
             "fecha_corte": str(fecha_corte),
             "dias_inactividad": int(dias_inactividad),
         }
-        st.success("Análisis Fase 4 calculado correctamente.")
+        st.success("Análisis Fase 4.1 calculado correctamente.")
 
     df = st.session_state.get("student_metrics_df", pd.DataFrame())
     if "nivel_riesgo" in df.columns:
@@ -323,7 +323,7 @@ elif menu == "5. Análisis Fase 4":
             mime="text/csv",
         )
     else:
-        st.info("Configura los parámetros y presiona 'Calcular análisis Fase 4'.")
+        st.info("Configura los parámetros y presiona 'Calcular análisis Fase 4.1'.")
 
 # -------------------------------------------------------------------
 # 6. Guardar corte histórico
@@ -332,7 +332,7 @@ elif menu == "6. Guardar corte histórico":
     st.header("6. Guardar corte histórico en Supabase")
     df = st.session_state.get("student_metrics_df", pd.DataFrame())
     if df.empty or "nivel_riesgo" not in df.columns:
-        st.warning("Primero calcula el análisis Fase 4 en el menú 5.")
+        st.warning("Primero calcula el análisis Fase 4.1 en el menú 5.")
         st.stop()
 
     params = st.session_state.get("fase3_params", {})
@@ -404,7 +404,7 @@ elif menu == "7. Dashboard ejecutivo":
     st.header("7. Dashboard ejecutivo")
     df = st.session_state.get("student_metrics_df", pd.DataFrame())
     if df.empty or "nivel_riesgo" not in df.columns:
-        st.warning("Primero calcula el análisis Fase 4 en el menú 5.")
+        st.warning("Primero calcula el análisis Fase 4.1 en el menú 5.")
         st.stop()
     summary = st.session_state.get("summary") or build_summary(df)
 
@@ -431,7 +431,7 @@ elif menu == "8. Reporte PDF ejecutivo":
     st.header("8. Reporte PDF ejecutivo")
     df = st.session_state.get("student_metrics_df", pd.DataFrame())
     if df.empty or "nivel_riesgo" not in df.columns:
-        st.warning("Primero calcula el análisis Fase 4 en el menú 5.")
+        st.warning("Primero calcula el análisis Fase 4.1 en el menú 5.")
         st.stop()
 
     summary = st.session_state.get("summary") or build_summary(df)
@@ -442,8 +442,9 @@ elif menu == "8. Reporte PDF ejecutivo":
 
     st.markdown(
         """
-        Este módulo genera un PDF ejecutivo con el resumen del curso, indicadores generales,
-        distribución de riesgo, ranking de causas, comparación por aula/sección y estudiantes priorizados.
+        Este módulo genera un PDF ejecutivo enriquecido con gráficas, resumen del curso,
+        estados académicos, velocidad de avance, comparación entre cohortes/secciones,
+        tendencia frente al reporte anterior, ranking de causas y estudiantes priorizados.
         """
     )
 
@@ -470,7 +471,17 @@ elif menu == "8. Reporte PDF ejecutivo":
 
     aulas_canvas = [{"label": l, "canvas_course_id": cid} for l, cid in zip(selected_labels, selected_ids)]
 
-    if st.button("Generar PDF ejecutivo"):
+    incluir_tendencia = st.checkbox("Incluir tendencia respecto al reporte anterior guardado en Supabase", value=True)
+    previous_report_pdf = None
+    if incluir_tendencia:
+        ok_prev, prev = get_previous_report(course_name, st.session_state.get("last_saved_report_id"))
+        if ok_prev:
+            previous_report_pdf = prev
+            st.success(f"Se incluirá tendencia con el reporte anterior: {prev.get('nombre_reporte')}")
+        else:
+            st.info("No se encontró reporte anterior. El PDF indicará que no existe corte previo disponible.")
+
+    if st.button("Generar PDF ejecutivo avanzado"):
         try:
             pdf_bytes = generate_executive_pdf(
                 df=df,
@@ -483,9 +494,10 @@ elif menu == "8. Reporte PDF ejecutivo":
                 usuario_generador=usuario_generador_pdf,
                 aulas_canvas=aulas_canvas,
                 logo_path="assets/logo_ave.jpg",
+                previous_report=previous_report_pdf,
             )
             st.session_state["last_pdf_bytes"] = pdf_bytes
-            st.success("PDF ejecutivo generado correctamente.")
+            st.success("PDF ejecutivo avanzado generado correctamente.")
         except Exception as e:
             st.error("No se pudo generar el PDF ejecutivo.")
             st.exception(e)
@@ -498,14 +510,14 @@ elif menu == "8. Reporte PDF ejecutivo":
             file_name=f"{safe_name}.pdf",
             mime="application/pdf",
         )
-        st.info("El PDF incluye colores AVE y marca de agua: Desarrollador Ing. Christian Pocol - Asesor Académico AVE.")
+        st.info("El PDF incluye gráficas, colores AVE y marca de agua: Desarrollador Ing. Christian Pocol - Asesor Académico AVE.")
 
 # -------------------------------------------------------------------
 # 9. Resumen
 # -------------------------------------------------------------------
-elif menu == "9. Resumen de Fase 4":
-    st.header("9. Resumen de Fase 4")
-    st.write("Esta fase agrega la primera capa real de análisis académico y persistencia histórica.")
+elif menu == "9. Resumen de Fase 4.1":
+    st.header("9. Resumen de Fase 4.1")
+    st.write("Esta fase enriquece el reporte PDF con gráficas, estados académicos, tendencias, cohortes y ranking de causas.")
     checklist = pd.DataFrame([
         {"Elemento": "Selección multicurso/secciones", "Estado": "Implementado"},
         {"Elemento": "Carga de estudiantes, actividades, módulos y entregas", "Estado": "Implementado"},
@@ -516,7 +528,7 @@ elif menu == "9. Resumen de Fase 4":
         {"Elemento": "Comparación por aula/sección", "Estado": "Implementado"},
         {"Elemento": "Guardado de corte histórico en Supabase", "Estado": "Implementado"},
         {"Elemento": "Comparación con reporte anterior", "Estado": "Inicial"},
-        {"Elemento": "Reporte ejecutivo PDF", "Estado": "Implementado"},
+        {"Elemento": "Reporte ejecutivo PDF enriquecido con gráficas", "Estado": "Implementado"},
     ])
     st.dataframe(checklist, use_container_width=True)
-    st.info("La Fase 4 implementa el PDF ejecutivo con colores AVE, marca de agua y tablas formales. La siguiente fase puede enfocarse en intervenciones y seguimiento individual.")
+    st.info("La Fase 4.1 implementa el PDF ejecutivo avanzado con colores AVE, marca de agua, gráficas, tendencia histórica, comparación por cohortes/secciones y ranking de causas de riesgo.")
