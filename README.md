@@ -1,36 +1,36 @@
-# Plataforma Académica AVE UVG - Fase 3.2
+# Plataforma Académica AVE UVG - Fase 4
 
-Versión corregida para guardado histórico en Supabase.
+Esta versión incorpora el reporte ejecutivo PDF con identidad visual AVE.
 
-## Corrección incluida
+## Incluye
 
-Esta versión corrige el error:
+- Token Canvas desde la interfaz.
+- Selección multicurso/aulas Canvas como secciones consolidadas.
+- Diagnóstico Canvas.
+- Carga académica de estudiantes, actividades, módulos y entregas.
+- Cálculo de avance esperado, avance real, brecha y riesgo académico.
+- Ranking de causas de riesgo.
+- Guardado de cortes históricos en Supabase.
+- Generación de PDF ejecutivo con colores AVE y marca de agua.
 
-```text
-invalid input syntax for type integer: "5.0"
-```
+## Colores AVE
 
-El problema se producía porque algunos campos enteros provenientes de Pandas se estaban enviando a Supabase como texto decimal, por ejemplo `5.0`, aunque la tabla esperaba un `integer`.
+- Azul: #0f1c75
+- Celeste: #1c73f5
+- Verde: #00ab0d
+- Amarillo: #ffb500
 
-Ahora la app limpia automáticamente:
-
-- `NaT` -> `NULL`
-- `NaN` -> `NULL`
-- `5.0` -> `5` en columnas enteras
-- porcentajes y métricas decimales -> `numeric`
-- fechas vacías -> `NULL`
-
-## Uso
-
-1. Conserva tu archivo `.streamlit/secrets.toml`.
-2. Ejecuta la app:
+## Ejecución local
 
 ```bash
+pip install -r requirements.txt
 streamlit run app.py
 ```
 
-3. Carga datos académicos.
-4. Ejecuta el análisis de Fase 3.
-5. Guarda el corte histórico en Supabase.
+## Supabase
 
-No es necesario volver a ejecutar `schema_fase3.sql` si las tablas ya existen.
+Si ya ejecutaste `database/schema_fase3.sql` en la fase anterior, no necesitas crear tablas nuevas para esta fase.
+
+## Recomendación
+
+Usa la clave `service_role` en los secretos de Streamlit para guardar cortes históricos con RLS activado.
